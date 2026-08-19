@@ -36,7 +36,7 @@
       <span class="material-symbols-outlined">search</span>दर खोजें
     </a>
     <a href="#pdf-section" class="sidebar-link" onclick="closeSidebar()">
-      <span class="material-symbols-outlined">description</span>पीडीएफ देखें
+      <span class="material-symbols-outlined">description</span>गाइडलाइन देखें
     </a>
   </div>
   <div class="sidebar-note">
@@ -109,34 +109,25 @@
         </div>
       </div>
       <button class="view-btn" id="viewPdfBtn" disabled>
-        <span class="material-symbols-outlined">picture_as_pdf</span>पीडीएफ देखें
+        <span class="material-symbols-outlined">picture_as_pdf</span>गाइडलाइन देखें
       </button>
     </section>
 
-    <!-- PDF Viewer -->
+    <!-- PDF Viewer (Scroll Mode) -->
     <section class="glass animate-in" id="pdf-section" style="animation-delay:0.2s">
       <div class="pdf-header">
         <div class="pdf-title">
-          <span class="material-symbols-outlined" style="font-size:18px">description</span>
+          <span class="material-symbols-outlined" style="font-size:18px">auto_stories</span>
           <span id="pdfTitleText">&mdash;</span>
         </div>
         <div class="pdf-controls">
-          <button class="ctrl-btn" id="prevBtn" disabled><span class="material-symbols-outlined">chevron_left</span></button>
-          <div class="page-jump">
-            <span>पृष्ठ</span>
-            <input type="number" id="pageInput" min="1" value="1" />
-            <span>/ <span id="totalPages">&mdash;</span></span>
-          </div>
-          <button class="ctrl-btn" id="nextBtn" disabled><span class="material-symbols-outlined">chevron_right</span></button>
           <button class="ctrl-btn" id="zoomOutBtn"><span class="material-symbols-outlined">zoom_out</span></button>
           <span class="zoom-badge" id="zoomBadge">150%</span>
           <button class="ctrl-btn" id="zoomInBtn"><span class="material-symbols-outlined">zoom_in</span></button>
-          <button class="save-btn" id="savePageBtn">
-            <span class="material-symbols-outlined">photo_camera</span>इमेज सेव
-          </button>
+          <span class="page-info" id="pageInfo">पृष्ठ — / —</span>
         </div>
       </div>
-      <div class="pdf-canvas-wrap"><canvas id="pdf-canvas"></canvas></div>
+      <div class="pdf-canvas-wrap" id="pdfScrollContainer"></div>
     </section>
 
   </div>

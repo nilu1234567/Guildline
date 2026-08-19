@@ -4,35 +4,40 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
+// ── Global Security: Disable Right-Click everywhere ───────────────────
+document.addEventListener('contextmenu', e => e.preventDefault());
+
+// ── Global Security: Disable text selection & drag ───────────────────
+document.addEventListener('selectstart', e => e.preventDefault());
+document.addEventListener('dragstart',   e => e.preventDefault());
+
 // ── DOM refs ─────────────────────────────────────────────────────────
-const districtSelect   = document.getElementById('districtSelect');
-const tehsilSelect     = document.getElementById('tehsilSelect');
-const viewPdfBtn       = document.getElementById('viewPdfBtn');
-const pdfSection       = document.getElementById('pdf-section');
-const canvas           = document.getElementById('pdf-canvas');
-const ctx              = canvas.getContext('2d');
-const prevBtn          = document.getElementById('prevBtn');
-const nextBtn          = document.getElementById('nextBtn');
-const pageInput        = document.getElementById('pageInput');
-const totalPagesEl     = document.getElementById('totalPages');
-const pdfTitleText     = document.getElementById('pdfTitleText');
-const savePageBtn      = document.getElementById('savePageBtn');
-const zoomInBtn        = document.getElementById('zoomInBtn');
-const zoomOutBtn       = document.getElementById('zoomOutBtn');
-const zoomBadge        = document.getElementById('zoomBadge');
-const loadingOverlay   = document.getElementById('loadingOverlay');
-const loadingText      = document.getElementById('loadingText');
-const menuBtn          = document.getElementById('menuBtn');
-const sidebar          = document.getElementById('sidebar');
-const sideOverlay      = document.getElementById('overlay');
-const errorBanner      = document.getElementById('errorBanner');
-const errorMsg         = document.getElementById('errorMsg');
-const connectingBanner = document.getElementById('connectingBanner');
+const districtSelect    = document.getElementById('districtSelect');
+const tehsilSelect      = document.getElementById('tehsilSelect');
+const viewPdfBtn        = document.getElementById('viewPdfBtn');
+const pdfSection        = document.getElementById('pdf-section');
+const pdfScrollContainer= document.getElementById('pdfScrollContainer');
+const pdfTitleText      = document.getElementById('pdfTitleText');
+const pageInfo          = document.getElementById('pageInfo');
+const zoomInBtn         = document.getElementById('zoomInBtn');
+const zoomOutBtn        = document.getElementById('zoomOutBtn');
+const zoomBadge         = document.getElementById('zoomBadge');
+const loadingOverlay    = document.getElementById('loadingOverlay');
+const loadingText       = document.getElementById('loadingText');
+const menuBtn           = document.getElementById('menuBtn');
+const sidebar           = document.getElementById('sidebar');
+const sideOverlay       = document.getElementById('overlay');
+const errorBanner       = document.getElementById('errorBanner');
+const errorMsg          = document.getElementById('errorMsg');
+const connectingBanner  = document.getElementById('connectingBanner');
 
 // ── State ─────────────────────────────────────────────────────────────
-let pdfDoc = null, currentPage = 1, totalPages = 0;
-let scale  = 1.5,  renderTask  = null;
-let currentDistrict = '', currentTehsil = '';
+let pdfDoc          = null;
+let totalPages      = 0;
+let scale           = 1.5;
+let renderingAll    = false;
+let currentDistrict = '';
+let currentTehsil   = '';
 
 // ── Sidebar ───────────────────────────────────────────────────────────
 menuBtn.addEventListener('click', () => {
@@ -45,13 +50,28 @@ function closeSidebar() {
   sideOverlay.classList.remove('show');
 }
 
+// ── Scroll: track visible page in pageInfo ────────────────────────────
+function updatePageInfoOnScroll() {
+  const canvases = pdfScrollContainer.querySelectorAll('canvas[data-page]');
+  if (!canvases.length) return;
+  const containerTop = pdfScrollContainer.getBoundingClientRect().top;
+  let closest = 1;
+  let minDist = Infinity;
+  canvases.forEach(cv => {
+    const dist = Math.abs(cv.getBoundingClientRect().top - containerTop);
+    if (dist < minDist) { minDist = dist; closest = parseInt(cv.dataset.page); }
+  });
+  pageInfo.textContent = `पृष्ठ ${closest} / ${totalPages}`;
+}
+pdfScrollContainer.addEventListener('scroll', updatePageInfoOnScroll);
+
 // ── Init: Wait for MEGA index, then load districts ────────────────────
 async function init() {
   connectingBanner.style.display = 'flex';
   errorBanner.style.display = 'none';
 
   let retries = 0;
-  const maxRetries = 30; // wait up to ~60 seconds
+  const maxRetries = 30;
 
   async function tryLoadDistricts() {
     try {
@@ -65,7 +85,6 @@ async function init() {
       }
 
       if (!status.ready || status.districts === 0) {
-        // Still connecting to MEGA
         retries++;
         if (retries >= maxRetries) {
           connectingBanner.style.display = 'none';
@@ -73,7 +92,7 @@ async function init() {
           errorMsg.textContent = 'Timeout: MEGA folder index nahi bana. Server check karen.';
           return;
         }
-        setTimeout(tryLoadDistricts, 2000); // retry every 2s
+        setTimeout(tryLoadDistricts, 2000);
         return;
       }
 
@@ -149,7 +168,6 @@ viewPdfBtn.addEventListener('click', async () => {
   try {
     const url = '/api/pdf/' + encodeURIComponent(dist) + '/' + encodeURIComponent(teh);
 
-    // PDF.js streams from our server which proxies MEGA
     pdfDoc = await pdfjsLib.getDocument({
       url: url,
       withCredentials: false,
@@ -158,19 +176,14 @@ viewPdfBtn.addEventListener('click', async () => {
     }).promise;
 
     totalPages = pdfDoc.numPages;
-    currentPage = 1;
     scale = 1.5;
 
-    totalPagesEl.textContent = totalPages;
-    pageInput.max   = totalPages;
-    pageInput.value = 1;
-    pdfTitleText.textContent = dist + '  े  ' + teh;
+    pdfTitleText.textContent = dist + ' › ' + teh;
+    pageInfo.textContent = `पृष्ठ 1 / ${totalPages}`;
 
-    await renderPage(1);
+    await renderAllPages();
 
     pdfSection.classList.add('visible');
-    prevBtn.disabled = true;
-    nextBtn.disabled = totalPages <= 1;
     hideLoading();
 
     setTimeout(() => {
@@ -185,65 +198,91 @@ viewPdfBtn.addEventListener('click', async () => {
   }
 });
 
-// ── Render page ───────────────────────────────────────────────────────
-async function renderPage(num) {
+// ── Render ALL pages (scroll mode) ───────────────────────────────────
+async function renderAllPages() {
   if (!pdfDoc) return;
-  if (renderTask) { renderTask.cancel(); renderTask = null; }
+  if (renderingAll) return;
+  renderingAll = true;
 
-  const page = await pdfDoc.getPage(num);
-  const dpr  = window.devicePixelRatio || 1;
-  const vp   = page.getViewport({ scale: scale * dpr });
+  // Clear old pages
+  pdfScrollContainer.innerHTML = '';
 
-  canvas.width  = vp.width;
-  canvas.height = vp.height;
-  canvas.style.width  = (vp.width  / dpr) + 'px';
-  canvas.style.height = (vp.height / dpr) + 'px';
+  const dpr = window.devicePixelRatio || 1;
 
-  renderTask = page.render({ canvasContext: ctx, viewport: vp });
-  try {
-    await renderTask.promise;
-  } catch (e) {
-    if (e.name !== 'RenderingCancelledException') throw e;
+  for (let num = 1; num <= totalPages; num++) {
+    const page = await pdfDoc.getPage(num);
+    const vp   = page.getViewport({ scale: scale * dpr });
+
+    // Page wrapper
+    const wrapper = document.createElement('div');
+    wrapper.className = 'pdf-page-wrapper';
+
+    // Page number badge
+    const badge = document.createElement('div');
+    badge.className = 'pdf-page-badge';
+    badge.textContent = `${num} / ${totalPages}`;
+    wrapper.appendChild(badge);
+
+    // Canvas
+    const canvas = document.createElement('canvas');
+    canvas.dataset.page = num;
+    canvas.width  = vp.width;
+    canvas.height = vp.height;
+    canvas.style.width  = (vp.width  / dpr) + 'px';
+    canvas.style.height = (vp.height / dpr) + 'px';
+
+    // Disable right-click on each canvas
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+    wrapper.appendChild(canvas);
+
+    // ── Save button (hover pe dikhta hai) ──
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'page-save-btn';
+    saveBtn.title = `पृष्ठ ${num} सेव करें`;
+    saveBtn.innerHTML = '<span class="material-symbols-outlined">photo_camera</span><span class="page-save-label">इमेज सेव</span>';
+    saveBtn.addEventListener('click', () => {
+      const a = document.createElement('a');
+      a.download = `${currentDistrict}_${currentTehsil}_page${num}.png`;
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+    });
+    wrapper.appendChild(saveBtn);
+
+    pdfScrollContainer.appendChild(wrapper);
+
+    const ctx = canvas.getContext('2d');
+    const renderTask = page.render({ canvasContext: ctx, viewport: vp });
+    try {
+      await renderTask.promise;
+    } catch (e) {
+      if (e.name !== 'RenderingCancelledException') console.error(e);
+    }
   }
 
-  pageInput.value  = num;
-  prevBtn.disabled = (num <= 1);
-  nextBtn.disabled = (num >= totalPages);
   zoomBadge.textContent = Math.round(scale * 100) + '%';
+  renderingAll = false;
 }
-
-// ── Page controls ─────────────────────────────────────────────────────
-prevBtn.addEventListener('click', () => {
-  if (currentPage > 1) { currentPage--; renderPage(currentPage); }
-});
-nextBtn.addEventListener('click', () => {
-  if (currentPage < totalPages) { currentPage++; renderPage(currentPage); }
-});
-pageInput.addEventListener('change', () => {
-  let p = parseInt(pageInput.value);
-  if (isNaN(p) || p < 1) p = 1;
-  if (p > totalPages) p = totalPages;
-  currentPage = p; renderPage(p);
-});
-pageInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter') pageInput.dispatchEvent(new Event('change'));
-});
 
 // ── Zoom ──────────────────────────────────────────────────────────────
 zoomInBtn.addEventListener('click', () => {
-  if (scale < 3.5) { scale = parseFloat((scale + 0.25).toFixed(2)); renderPage(currentPage); }
+  if (scale < 3.5) {
+    scale = parseFloat((scale + 0.25).toFixed(2));
+    renderAllPages();
+  }
 });
 zoomOutBtn.addEventListener('click', () => {
-  if (scale > 0.5) { scale = parseFloat((scale - 0.25).toFixed(2)); renderPage(currentPage); }
+  if (scale > 0.5) {
+    scale = parseFloat((scale - 0.25).toFixed(2));
+    renderAllPages();
+  }
 });
 
-// ── Save page as PNG image ────────────────────────────────────────────
-savePageBtn.addEventListener('click', () => {
+// ── Keyboard zoom ─────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
   if (!pdfDoc) return;
-  const a = document.createElement('a');
-  a.download = currentDistrict + '_' + currentTehsil + '_page' + currentPage + '.png';
-  a.href     = canvas.toDataURL('image/png');
-  a.click();
+  if (e.ctrlKey && e.key === '+') { e.preventDefault(); zoomInBtn.click(); }
+  if (e.ctrlKey && e.key === '-') { e.preventDefault(); zoomOutBtn.click(); }
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -257,20 +296,8 @@ function hideLoading() {
 function hidePdfSection() {
   pdfSection.classList.remove('visible');
   pdfDoc = null;
+  pdfScrollContainer.innerHTML = '';
 }
-
-// Prevent right-click on canvas
-canvas.addEventListener('contextmenu', e => e.preventDefault());
-
-// Keyboard navigation
-document.addEventListener('keydown', e => {
-  if (!pdfDoc) return;
-  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-    if (currentPage < totalPages) { currentPage++; renderPage(currentPage); }
-  } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-    if (currentPage > 1) { currentPage--; renderPage(currentPage); }
-  }
-});
 
 // ── Start ─────────────────────────────────────────────────────────────
 init();
